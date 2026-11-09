@@ -13,6 +13,7 @@
     box-shadow:0 4px 18px rgba(29,39,51,.08); }
   h1 { font-size:15px; margin:0 0 2px; text-wrap:balance; }
   .sub { color:var(--muted); font-size:12px; margin-bottom:10px; }
+  .ver { color:var(--muted); font-size:11px; margin:-2px 0 6px; font-variant-numeric:tabular-nums; }
   .btns { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
   button { border:1px solid var(--line); background:var(--btn); color:var(--ink); border-radius:6px; padding:4px 9px;
     font:inherit; font-size:13px; cursor:pointer; white-space:nowrap; }
@@ -39,6 +40,7 @@
 <div id="panel">
   <div class="top"><h1 data-t="title"></h1>
     <div class="lang" id="lang"><button data-l="zh">中文</button><button data-l="en">EN</button><button data-l="pl">PL</button></div></div>
+  <div class="ver" data-t="ver"></div>
   <div class="sub" data-t="sub"></div>
   <div class="btns" id="views">
     <button data-v="iso" data-t="v_iso"></button><button data-v="collar" data-t="v_collar"></button><button data-v="storz" data-t="v_storz"></button>
@@ -610,9 +612,10 @@ mod2.group.position.x = SHIFT + APRON1;  // 第 2 节套筒口 = 第 1 节裙边
 mod2.group.visible = false;
 scene.add(mod2.group);
 
+const VERSION = "2026-11-09 12:19";  // 每次推到在线链接前改成当时的基辅时间，别人一看就知道是不是最新版
 const TEXT = {
   zh: {
-    title: "NP 80/10 防洪管", sub: "Ø800 × 10 m，单侧裙边 800",
+    title: "NP 80/10 防洪管", sub: "Ø800 × 10 m，单侧裙边 800", ver: `版本 ${VERSION}`,
     v_iso: "整体", v_collar: "套筒端", v_storz: "注水口端", v_valve: "出水口", v_joint: "两节连接", v_top: "俯视", v_side: "侧视",
     show: "显示编号", dims: "显示尺寸（mm）", legend_t: "编号说明", hint: "拖动旋转 · 滚轮缩放 · 右键平移",
     legend: ["注水口 STORZ 52，带盖和链条", "裙边单侧伸出 800，从套筒口到另一头前 500", "套筒，插相邻一节的平头端",
@@ -620,7 +623,7 @@ const TEXT = {
       "4 条绑带，末端用带锁的 D 形主锁，挂相邻一节的 D 环", "每条绑带上的伸缩扣：拉带尾收紧，按下扣舌放松"],
   },
   en: {
-    title: "NP 80/10 flood barrier", sub: "Ø800 × 10 m, apron 800 on one side",
+    title: "NP 80/10 flood barrier", sub: "Ø800 × 10 m, apron 800 on one side", ver: `Version ${VERSION}`,
     v_iso: "Overview", v_collar: "Collar end", v_storz: "Filling end", v_valve: "Outlet", v_joint: "Joint", v_top: "Top", v_side: "Side",
     show: "Show numbers", dims: "Show dimensions (mm)", legend_t: "Legend", hint: "Drag to rotate · Scroll to zoom · Right-drag to pan",
     legend: ["Filling: STORZ 52 coupling with cap and chain", "Apron 800 on one side, from the collar to 500 before the far end",
@@ -630,7 +633,7 @@ const TEXT = {
       "Adjustable cam buckle on each strap: pull the tail to tighten, press the lever to release"],
   },
   pl: {
-    title: "Zapora przeciwpowodziowa NP 80/10", sub: "Ø800 × 10 m, fartuch 800 mm z jednej strony",
+    title: "Zapora przeciwpowodziowa NP 80/10", sub: "Ø800 × 10 m, fartuch 800 mm z jednej strony", ver: `Wersja ${VERSION}`,
     v_iso: "Całość", v_collar: "Kołnierz", v_storz: "Wlew", v_valve: "Spust", v_joint: "Połączenie", v_top: "Z góry", v_side: "Z boku",
     show: "Pokaż numery", dims: "Pokaż wymiary (mm)", legend_t: "Legenda",
     hint: "Przeciągnij: obrót · Kółko: zoom · Prawy przycisk: przesuwanie",
