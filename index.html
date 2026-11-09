@@ -14,7 +14,6 @@
   h1 { font-size:15px; margin:0 0 2px; text-wrap:balance; }
   .sub { color:var(--muted); font-size:12px; margin-bottom:10px; }
   .btns { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
-  .lab { font-size:12px; color:var(--muted); align-self:center; margin-right:2px; }
   button { border:1px solid var(--line); background:var(--btn); color:var(--ink); border-radius:6px; padding:4px 9px;
     font:inherit; font-size:13px; cursor:pointer; white-space:nowrap; }
   button.on { border-color:var(--accent); color:var(--accent); }
@@ -45,8 +44,6 @@
     <button data-v="iso" data-t="v_iso"></button><button data-v="collar" data-t="v_collar"></button><button data-v="storz" data-t="v_storz"></button>
     <button data-v="valve" data-t="v_valve"></button><button data-v="joint" data-t="v_joint"></button><button data-v="top" data-t="v_top"></button><button data-v="side" data-t="v_side"></button>
   </div>
-  <div class="btns" id="drain"><span class="lab" data-t="outlet"></span>
-    <button data-d="valve" data-t="d_valve"></button><button data-d="sleeve" data-t="d_sleeve"></button></div>
   <div class="checks">
     <label><input type="checkbox" id="lbl" checked> <span data-t="show"></span></label>
     <label><input type="checkbox" id="dims" checked> <span data-t="dims"></span></label>
@@ -69,10 +66,14 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 // 尺寸（m），和 make_2d.py 一致
 const L = 10, R = 0.4, APRON = 0.8, CLEAR = 0.5;
-const C = 0.5, A_STORZ = 1.3, VENT_X = 1.0, DRAIN_X = 0.6, VALVE_Z = 0.21;
+const C = 0.5, A_STORZ = 1.3, VENT_X = 1.0, DRAIN_X = 0.6;
 const DRING_X = Array.from({ length: 9 }, (_, i) => 0.8 + i * 1.0), DRING_ANG = 55;
 const CONN_FROM_END = 0.7, STRAP_ANG = [60, 120], N_EYELET = 14;
 const BODY0 = C, BODY1 = C + L, APRON1 = BODY1 - CLEAR;
+// 鸡眼：裙边两头各留 320，中间 13 个间距 720（2D 图还是两头 300、等距约 723，下次重出 2D 时一起改）
+const EYE_END = 0.32, EYE_PITCH = (APRON1 - 2 * EYE_END) / (N_EYELET - 1);
+// 套筒上的绑带：固定短带缝在 X_ANCHOR，伸缩扣在 X_BUCKLE（都是到套筒口的距离）
+const X_ANCHOR = 0.44, X_BUCKLE = 0.24, STRAP_W = 0.038;
 const SHIFT = -BODY1 / 2;  // 单节居中
 
 // 充水后的截面：按名义 Ø800，只略扁一点、底部贴地压平；周长等于 Ø800 的周长
@@ -278,8 +279,6 @@ const pvcPatch = new THREE.MeshPhysicalMaterial({ color: 0xe04d16, roughness: 0.
 const pvcRim = new THREE.MeshStandardMaterial({ color: 0xbf4312, roughness: 0.6, envMapIntensity: 0.5, side: THREE.DoubleSide });
 const steel = new THREE.MeshStandardMaterial({ color: 0xd8dce0, metalness: 1, roughness: 0.22 });
 const alu = new THREE.MeshStandardMaterial({ color: 0xc9ced3, metalness: 0.9, roughness: 0.32 });
-const greyPVC = new THREE.MeshStandardMaterial({ color: 0xb4b9bd, roughness: 0.5, envMapIntensity: 0.6 });
-const handleRed = new THREE.MeshStandardMaterial({ color: 0xd8431b, roughness: 0.4 });
 const black = new THREE.MeshStandardMaterial({ color: 0x1f2328, roughness: 0.75, side: THREE.DoubleSide });
 
 function mesh(geo, mat, parent) {
@@ -322,15 +321,56 @@ function ribbon(parent, pts, ups, w, mat) {  // 扁带：沿 pts，宽度方向 
   g.computeVertexNormals();
   return mesh(g, mat, parent);
 }
-function snapHook(parent, p, toward) {
+const caraMat = new THREE.MeshStandardMaterial({ color: 0x8e959c, metalness: 0.85, roughness: 0.3 });
+const lockMat = new THREE.MeshStandardMaterial({ color: 0xf08a24, roughness: 0.45 });
+function carabiner(parent, p, toward, n) {  // D 形带锁主锁：一头穿绑带末端，另一头挂相邻一节的 D 环；锁门上有橙色锁套
+  const Z = toward.clone().sub(p).normalize();
+  const Y = n.clone().addScaledVector(Z, -n.dot(Z)).normalize();
+  const X = new THREE.Vector3().crossVectors(Y, Z);
   const g = new THREE.Group();
   g.position.copy(p);
+  g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
   parent.add(g);
-  g.lookAt(parent.localToWorld(toward.clone()));
-  const h = mesh(new THREE.TorusGeometry(0.019, 0.0038, 8, 28), steel, g);
-  h.rotation.x = Math.PI / 2;
-  h.scale.set(1, 1.7, 1);
-  h.position.z = 0.03;
+  // 长轴沿 +Z（朝 D 环），长 100、宽 60；锁门是直边，在 -X 一侧
+  const P = (x, z) => new THREE.Vector3(x - 0.026, 0.009, z + 0.052);
+  const loop = new THREE.CatmullRomCurve3([
+    P(0, -0.034), P(0, -0.012), P(0, 0.012), P(0, 0.034), P(0.007, 0.046), P(0.024, 0.052), P(0.042, 0.046),
+    P(0.052, 0.026), P(0.055, 0), P(0.052, -0.026), P(0.042, -0.046), P(0.024, -0.052), P(0.007, -0.046),
+  ], true, "centripetal");
+  mesh(new THREE.TubeGeometry(loop, 140, 0.0046, 10, true), caraMat, g);
+  const sleeve = mesh(new THREE.CylinderGeometry(0.0078, 0.0078, 0.032, 16), lockMat, g);  // 锁套
+  sleeve.rotation.x = Math.PI / 2;
+  sleeve.position.copy(P(0, -0.012));
+  for (const dz of [-0.008, 0, 0.008]) {  // 锁套上的防滑槽
+    const r = mesh(new THREE.TorusGeometry(0.0079, 0.0011, 6, 16), lockMat, g);
+    r.position.copy(P(0, -0.012 + dz));
+  }
+  const nose = mesh(new THREE.CylinderGeometry(0.0058, 0.0058, 0.008, 12), steel, g);
+  nose.rotation.x = Math.PI / 2;
+  nose.position.copy(P(0, 0.008));
+  return g;
+}
+function camBuckle(parent, p, n) {  // 伸缩扣（凸轮扣）：长带穿过，拉带尾收紧，按下扣舌松开；局部 +X 沿筒体，+Y 外法线
+  const Y = n.clone().normalize();
+  const X = new THREE.Vector3(1, 0, 0).addScaledVector(Y, -Y.x).normalize();
+  const Z = new THREE.Vector3().crossVectors(X, Y);
+  const g = new THREE.Group();
+  g.position.copy(p);
+  g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+  parent.add(g);
+  mesh(new THREE.BoxGeometry(0.058, 0.004, 0.052), alu, g).position.y = 0.002;  // 底板
+  for (const k of [1, -1]) mesh(new THREE.BoxGeometry(0.058, 0.017, 0.004), alu, g).position.set(0, 0.0085, 0.025 * k);  // 两侧耳板
+  const pin = mesh(new THREE.CylinderGeometry(0.0032, 0.0032, 0.056, 10), steel, g);  // 销轴
+  pin.rotation.x = Math.PI / 2;
+  pin.position.set(-0.014, 0.013, 0);
+  const cam = new THREE.Group();  // 扣舌，压着带子，尾端微微翘起
+  cam.position.set(-0.014, 0.013, 0);
+  cam.rotation.z = 0.2;
+  g.add(cam);
+  mesh(new THREE.BoxGeometry(0.052, 0.004, 0.044), steel, cam).position.set(0.026, 0.004, 0);
+  const lip = mesh(new THREE.CylinderGeometry(0.0048, 0.0048, 0.044, 12), steel, cam);
+  lip.rotation.x = Math.PI / 2;
+  lip.position.set(0.052, 0.006, 0);
   return g;
 }
 const tags = [];
@@ -357,33 +397,6 @@ function dring(parent, x, phi) {
   bar.position.set(0, 0.009, -0.012);
 }
 
-function ballValve(parent) {  // 法兰夹紧筒体，灰色 PVC 球阀，红色扳手
-  const phi = Math.acos((VALVE_Z - HC) / SB), x = BODY0 + DRAIN_X;
-  const g0 = new THREE.Group();
-  parent.add(g0);
-  patch(g0, bodySurf, x, phi, 0.1);
-  const g = frameAt(g0, bodyPoint(x, phi, 0.002), SA, SB, phi);
-  mesh(new THREE.CylinderGeometry(0.065, 0.066, 0.012, 40), greyPVC, g).position.y = 0.006;
-  for (let i = 0; i < 6; i++) {
-    const t = i / 6 * TAU + 0.3;
-    mesh(new THREE.CylinderGeometry(0.0065, 0.0065, 0.006, 6), steel, g).position.set(0.052 * Math.cos(t), 0.015, 0.052 * Math.sin(t));
-  }
-  mesh(new THREE.CylinderGeometry(0.03, 0.034, 0.022, 32), greyPVC, g).position.y = 0.023;
-  const bodyV = mesh(new THREE.SphereGeometry(0.043, 32, 20), greyPVC, g);
-  bodyV.scale.set(1, 0.95, 1);
-  bodyV.position.y = 0.068;
-  mesh(new THREE.CylinderGeometry(0.037, 0.037, 0.03, 12), greyPVC, g).position.y = 0.112;  // 活接螺母
-  mesh(new THREE.CylinderGeometry(0.03, 0.031, 0.026, 32), greyPVC, g).position.y = 0.14;
-  const bore = mesh(new THREE.CircleGeometry(0.021, 24), black, g);
-  bore.rotation.x = -Math.PI / 2;
-  bore.position.y = 0.1535;
-  const stem = mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.03, 12), greyPVC, g);
-  stem.rotation.x = Math.PI / 2;
-  stem.position.set(0, 0.068, 0.052);
-  const lever = mesh(new THREE.BoxGeometry(0.11, 0.026, 0.012), handleRed, g);
-  lever.position.set(-0.042, 0.072, 0.068);
-  return g0;
-}
 const sleeveMat = new THREE.MeshPhysicalMaterial({ color: 0xe9541a, roughness: 0.5, clearcoat: 0.2, envMapIntensity: 0.6,
   side: THREE.DoubleSide });
 function sweep(curve, n, m, prof) {  // 沿曲线扫出软管；prof(s) 返回 [宽半轴, 厚半轴]，宽度方向尽量水平
@@ -482,28 +495,39 @@ function makeModule({ withTags = false, fitted = false } = {}) {
     v.set(x, 0.0022 + 0.0014 * (noise(x * 0.9, z * 2.2) + 1) / 2 + hem, z);
   }), apronMat, m);
   mesh(new THREE.BoxGeometry(APRON1, 0.0012, 0.025), pvcRim, m).position.set(APRON1 / 2, 0.0045, R + 0.22);  // 焊缝
-  const pitch = (APRON1 - 0.6) / (N_EYELET - 1);
+  const pitch = EYE_PITCH;
   for (let i = 0; i < N_EYELET; i++) {
     const e = mesh(new THREE.TorusGeometry(0.017, 0.0055, 8, 20), steel, m);
     e.rotation.x = Math.PI / 2;
-    e.position.set(0.3 + i * pitch, 0.0065, Z1 - 0.06);
+    e.position.set(EYE_END + i * pitch, 0.0065, Z1 - 0.06);
     const hole = mesh(new THREE.CircleGeometry(0.012, 16), black, m);
     hole.rotation.x = -Math.PI / 2;
-    hole.position.set(0.3 + i * pitch, 0.006, Z1 - 0.06);
+    hole.position.set(EYE_END + i * pitch, 0.006, Z1 - 0.06);
   }
   // 侧面 D 环，每侧一排
   for (const x of DRING_X) for (const s of [1, -1]) dring(m, BODY0 + x, s * rad(DRING_ANG));
   // 连接用 D 环（前一节的卡扣挂在这里）
   for (const a of STRAP_ANG) for (const s of [1, -1]) dring(m, BODY1 - CONN_FROM_END, s * rad(a));
-  // 套筒上的绑带 + 卡扣
+  // 套筒上的绑带：固定短带 → 伸缩扣 → 长带过套筒口 → 卡扣；带尾从伸缩扣另一头露出来，拉它收紧
   const cSurf = (x, phi, lift, v) => collarPoint(x, phi, fitted, lift, v);
   for (const a of STRAP_ANG) for (const s of [1, -1]) {
-    const phi = s * rad(a), [ca, cb] = collarParams(0.16, fitted);
-    patch(m, cSurf, 0.16, phi, 0.05, ca, cb);
-    const [nz0, ny0] = normal(ca, cb, phi);
-    const [oa, ob] = collarParams(0, fitted);
-    const [nz1, ny1] = normal(oa, ob, phi);
-    const p0 = collarPoint(0.2, phi, fitted, 0.005), p1 = collarPoint(0, phi, fitted, 0.009);
+    const phi = s * rad(a);
+    const cp = (x, lift, dp = 0) => collarPoint(x, phi + dp, fitted, lift);
+    const cn = (x, dp = 0) => {
+      const [ca, cb] = collarParams(x, fitted), [nz, ny] = normal(ca, cb, phi + dp);
+      return new THREE.Vector3(0, ny, nz);
+    };
+    const [ca, cb] = collarParams(X_ANCHOR, fitted);
+    patch(m, cSurf, X_ANCHOR, phi, 0.05, ca, cb);
+    const xm = (X_ANCHOR + X_BUCKLE) / 2;
+    ribbon(m, [cp(X_ANCHOR + 0.03, 0.005), cp(xm, 0.005), cp(X_BUCKLE + 0.01, 0.006)],
+      [cn(X_ANCHOR + 0.03), cn(xm), cn(X_BUCKLE)], STRAP_W, black);
+    camBuckle(m, cp(X_BUCKLE, 0.006), cn(X_BUCKLE));
+    const dp = -s * 0.075;  // 带尾往顶部方向偏一点，和固定短带错开
+    ribbon(m, [cp(X_BUCKLE + 0.036, 0.016), cp(X_BUCKLE + 0.14, 0.017, dp * 0.45), cp(X_BUCKLE + 0.28, 0.024, dp)],
+      [cn(X_BUCKLE), cn(X_BUCKLE + 0.14, dp * 0.45), cn(X_BUCKLE + 0.28, dp)], STRAP_W * 0.95, black);
+    const n1 = cn(0);
+    const p0 = cp(X_BUCKLE - 0.022, 0.008), pm = cp(X_BUCKLE / 2, 0.008), p1 = cp(0, 0.009);
     let p2, n2, hookTo;
     if (fitted) {  // 套在前一节上：带子拉到前一节的连接 D 环
       const xd = BODY1 - CONN_FROM_END - APRON1;  // 前一节 D 环在本节坐标里的 x
@@ -513,11 +537,11 @@ function makeModule({ withTags = false, fitted = false } = {}) {
       hookTo = bodyPoint(xd - 0.2 + APRON1, phi, 0.012).setX(xd - 0.2);
     } else {       // 没插东西：4 条带子从套筒口伸出来，卡扣在头上
       p2 = p1.clone().add(new THREE.Vector3(-0.3, -0.03, 0));
-      n2 = new THREE.Vector3(0, ny1, nz1);
+      n2 = n1.clone();
       hookTo = p2.clone().add(new THREE.Vector3(-0.3, -0.03, 0));
     }
-    ribbon(m, [p0, p1, p2], [new THREE.Vector3(0, ny0, nz0), new THREE.Vector3(0, ny1, nz1), n2], 0.038, black);
-    snapHook(m, p2, hookTo);
+    ribbon(m, [p0, pm, p1, p2], [cn(X_BUCKLE), cn(X_BUCKLE / 2), n1, n2], STRAP_W, black);
+    carabiner(m, p2, hookTo, n2);
   }
   // 进水口 STORZ 52（C 型）带盖和链条
   const sx = BODY1 - A_STORZ;
@@ -550,8 +574,8 @@ function makeModule({ withTags = false, fitted = false } = {}) {
   mesh(new THREE.CylinderGeometry(0.022, 0.025, 0.022, 24), black, vt).position.y = 0.023;
   mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.012, 24), black, vt).position.set(0.075, 0.004, 0.01);
   mesh(new THREE.BoxGeometry(0.05, 0.003, 0.008), black, vt).position.set(0.04, 0.006, 0.006);
-  // 出水口：两种做法，界面上切换
-  const valve = ballValve(m), sleeve = drainSleeve(m);
+  // 出水口：卷起扎紧的软袖口（客户 Rev D 的做法；11-09 定下不用球阀）
+  drainSleeve(m);
   // 平头端提手
   const hg = new THREE.TorusGeometry(0.08, 0.01, 6, 28, Math.PI);
   hg.rotateZ(-Math.PI / 2);
@@ -565,12 +589,13 @@ function makeModule({ withTags = false, fitted = false } = {}) {
     tag("2", m, new THREE.Vector3(7.5, 0.05, R + APRON * 0.55));
     tag("3", m, new THREE.Vector3(0.3, 0.72, 0.15));
     tag("4", m, new THREE.Vector3(BODY0 + DRAIN_X, 0.42, 0.78));
-    tag("5", m, new THREE.Vector3(0.3 + 4 * pitch, 0.06, R + APRON - 0.06));
+    tag("5", m, new THREE.Vector3(EYE_END + 4 * pitch, 0.06, R + APRON - 0.06));
     tag("6", m, new THREE.Vector3(BODY0 + VENT_X, 1.05, 0));
     tag("7", m, new THREE.Vector3(BODY0 + DRING_X[2], 0.95, 0.45));
     tag("8", m, new THREE.Vector3(-0.3, 0.38, 0.7));
+    tag("9", m, collarPoint(X_BUCKLE, rad(STRAP_ANG[1]), false, 0.15));
   }
-  return { group: m, valve, sleeve };
+  return { group: m };
 }
 
 const mod1 = makeModule({ withTags: true });
@@ -585,32 +610,34 @@ const TEXT = {
   zh: {
     title: "NP 80/10 防洪管", sub: "Ø800 × 10 m，单侧裙边 800",
     v_iso: "整体", v_collar: "套筒端", v_storz: "注水口端", v_valve: "出水口", v_joint: "两节连接", v_top: "俯视", v_side: "侧视",
-    outlet: "出水口", d_valve: "球阀", d_sleeve: "袖口", show: "显示编号", dims: "显示尺寸（mm）", legend_t: "编号说明", hint: "拖动旋转 · 滚轮缩放 · 右键平移",
-    legend: ["注水口 STORZ 52，带盖和链条", "裙边单侧伸出 800，从套筒口到另一头前 500", "套筒，插相邻一节的平头端", null,
-      "裙边鸡眼 14 个", "排气阀", "D 环，每侧一排", "4 条绑带和卡扣，挂相邻一节的 D 环"],
-    o_valve: "出水口：球阀", o_sleeve: "出水口：软袖口，卷起后扎紧",
+    show: "显示编号", dims: "显示尺寸（mm）", legend_t: "编号说明", hint: "拖动旋转 · 滚轮缩放 · 右键平移",
+    legend: ["注水口 STORZ 52，带盖和链条", "裙边单侧伸出 800，从套筒口到另一头前 500", "套筒，插相邻一节的平头端",
+      "出水口：软袖口，卷起后扎紧", "裙边鸡眼 14 个", "排气阀", "D 环，每侧一排",
+      "4 条绑带，末端用带锁的 D 形主锁，挂相邻一节的 D 环", "每条绑带上的伸缩扣：拉带尾收紧，按下扣舌放松"],
   },
   en: {
     title: "NP 80/10 flood barrier", sub: "Ø800 × 10 m, apron 800 on one side",
     v_iso: "Overview", v_collar: "Collar end", v_storz: "Filling end", v_valve: "Outlet", v_joint: "Joint", v_top: "Top", v_side: "Side",
-    outlet: "Outlet", d_valve: "Ball valve", d_sleeve: "Sleeve", show: "Show numbers", dims: "Show dimensions (mm)", legend_t: "Legend", hint: "Drag to rotate · Scroll to zoom · Right-drag to pan",
+    show: "Show numbers", dims: "Show dimensions (mm)", legend_t: "Legend", hint: "Drag to rotate · Scroll to zoom · Right-drag to pan",
     legend: ["Filling: STORZ 52 coupling with cap and chain", "Apron 800 on one side, from the collar to 500 before the far end",
-      "Collar that takes the end of the next module", null, "14 eyelets in the apron", "Air vent", "D-rings, one row on each side",
-      "4 straps with snap hooks to the D-rings of the next module"],
-    o_valve: "Outlet: ball valve", o_sleeve: "Outlet: drain sleeve, rolled up and tied",
+      "Collar that takes the end of the next module", "Outlet: drain sleeve, rolled up and tied", "14 eyelets in the apron",
+      "Air vent", "D-rings, one row on each side",
+      "4 straps ending in locking D-shaped carabiners, clipped to the D-rings of the next module",
+      "Adjustable cam buckle on each strap: pull the tail to tighten, press the lever to release"],
   },
   pl: {
     title: "Zapora przeciwpowodziowa NP 80/10", sub: "Ø800 × 10 m, fartuch 800 mm z jednej strony",
     v_iso: "Całość", v_collar: "Kołnierz", v_storz: "Wlew", v_valve: "Spust", v_joint: "Połączenie", v_top: "Z góry", v_side: "Z boku",
-    outlet: "Spust", d_valve: "Zawór kulowy", d_sleeve: "Rękaw", show: "Pokaż numery", dims: "Pokaż wymiary (mm)", legend_t: "Legenda",
+    show: "Pokaż numery", dims: "Pokaż wymiary (mm)", legend_t: "Legenda",
     hint: "Przeciągnij: obrót · Kółko: zoom · Prawy przycisk: przesuwanie",
     legend: ["Wlew: nasada STORZ 52 z pokrywą i łańcuszkiem", "Fartuch 800 mm z jednej strony, od kołnierza do 500 mm przed drugim końcem",
-      "Kołnierz łączący na koniec sąsiedniego modułu", null, "14 oczek w fartuchu", "Odpowietrznik",
-      "Pierścienie D, jeden rząd z każdej strony", "4 pasy z karabińczykami do pierścieni D sąsiedniego modułu"],
-    o_valve: "Spust: zawór kulowy", o_sleeve: "Spust: rękaw spustowy, zwinięty i związany",
+      "Kołnierz łączący na koniec sąsiedniego modułu", "Spust: rękaw spustowy, zwinięty i związany", "14 oczek w fartuchu",
+      "Odpowietrznik", "Pierścienie D, jeden rząd z każdej strony",
+      "4 pasy zakończone karabinkami typu D z blokadą, wpinanymi w pierścienie D sąsiedniego modułu",
+      "Regulowana klamra zaciskowa na każdym pasie: pociągnij końcówkę, aby napiąć, naciśnij dźwignię, aby poluzować"],
   },
 };
-let lang = "zh", drain = "valve";
+let lang = "zh";
 function applyText() {
   const T = TEXT[lang];
   document.documentElement.lang = { zh: "zh-CN", en: "en", pl: "pl" }[lang];
@@ -619,14 +646,16 @@ function applyText() {
   const ol = document.getElementById("legend");
   ol.replaceChildren(...T.legend.map(t => {
     const li = document.createElement("li");
-    li.textContent = t ?? T[drain === "sleeve" ? "o_sleeve" : "o_valve"];
+    li.textContent = t;
     return li;
   }));
   document.querySelectorAll("#lang button").forEach(b => b.classList.toggle("on", b.dataset.l === lang));
 }
-// ---------- 尺寸标注（mm），只标图纸给定的尺寸 ----------
+// ---------- 尺寸标注（mm）：图纸给定的尺寸，加 D 环和鸡眼的间距 ----------
 const dimMat = new THREE.MeshBasicMaterial({ color: 0x24303c });
-const dimGroup = new THREE.Group(), dimLabels = [];
+const dimGroup = new THREE.Group(), dimLabels = [], chains = [];
+let dimsOn = true;
+const mm = v => Math.round(v * 1000);
 mod1.group.add(dimGroup);
 function rod(a, b, r = 0.005) {
   const d = b.clone().sub(a), m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), dimMat);
@@ -646,6 +675,9 @@ function dimension(a, b, text, ext = [], at = a.clone().lerp(b, 0.5)) {  // ext�
   arrowHead(a, dir.clone().negate());
   arrowHead(b, dir);
   for (const [p, q] of ext) rod(p, q, 0.003);
+  return dimLabel(text, at);
+}
+function dimLabel(text, at) {
   const d = document.createElement("div");
   d.className = "dim";
   d.textContent = text;
@@ -653,10 +685,66 @@ function dimension(a, b, text, ext = [], at = a.clone().lerp(b, 0.5)) {  // ext�
   o.position.copy(at);
   dimGroup.add(o);
   dimLabels.push(o);
+  return o;
+}
+// 沿筒体方向的连续尺寸：xs 是分段点，ext(x) 返回引出线 [起点, 终点]；
+// rep = [起, 止) 是等距重复段的下标，屏幕上放不下每段的数字时，合并成一个“n × 间距 = 总长”
+function chainDim(xs, y, z, ext, rep) {
+  const V = x => new THREE.Vector3(x, y, z), each = [];
+  rod(V(xs[0]), V(xs.at(-1)));
+  for (let i = 0; i < xs.length - 1; i++) {
+    arrowHead(V(xs[i]), new THREE.Vector3(-1, 0, 0));
+    arrowHead(V(xs[i + 1]), new THREE.Vector3(1, 0, 0));
+    const o = dimLabel(String(mm(xs[i + 1] - xs[i])), V((xs[i] + xs[i + 1]) / 2));
+    if (i >= rep[0] && i < rep[1]) each.push(o);
+  }
+  for (const x of xs) { const [p, q] = ext(x); rod(p, q, 0.003); }
+  const n = rep[1] - rep[0], step = mm(xs[rep[0] + 1] - xs[rep[0]]);
+  const sum = dimLabel(`${n} × ${step} = ${n * step}`, V((xs[rep[0]] + xs[rep[1]]) / 2));
+  chains.push({ pts: xs.slice(rep[0], rep[1] + 1).map(V), each, sum, minPx: String(step).length * 8 + 26 });
+}
+const _p = new THREE.Vector3(), _q = new THREE.Vector3();
+function screenGap(a, b) {
+  _p.copy(a).applyMatrix4(dimGroup.matrixWorld).project(camera);
+  _q.copy(b).applyMatrix4(dimGroup.matrixWorld).project(camera);
+  return Math.hypot((_q.x - _p.x) * innerWidth / 2, (_q.y - _p.y) * innerHeight / 2);
+}
+function updateChains() {  // 每帧看最短的一段在屏幕上有多长，决定逐段标数字还是合并
+  if (!dimsOn) return;
+  for (const c of chains) {
+    let min = Infinity;
+    for (let i = 0; i < c.pts.length - 1; i++) min = Math.min(min, screenGap(c.pts[i], c.pts[i + 1]));
+    const fit = min > c.minPx;
+    c.each.forEach(o => { o.visible = fit; });
+    c.sum.visible = !fit;
+  }
 }
 {
   const V = (x, y, z) => new THREE.Vector3(x, y, z), y = 0.012;
-  const zA = R + APRON + 0.3;
+  const Z1 = R + APRON, zA = Z1 + 0.75;
+  // D 环：筒体起点 → 每侧 9 个侧面 D 环 → 连接 D 环 → 平头端；标在 +z 一侧那排 D 环外面
+  {
+    const a = rad(DRING_ANG), [nz, ny] = normal(SA, SB, a);
+    const yD = HC + SB * Math.cos(a), zD = SA * Math.sin(a), OFF = 0.3;
+    const yC = yD + ny * OFF, zC = zD + nz * OFF;
+    const xConn = BODY1 - CONN_FROM_END, ac = rad(STRAP_ANG[0]);
+    const xs = [BODY0, ...DRING_X.map(x => BODY0 + x), xConn, BODY1];
+    const out = V(0, yC + ny * 0.05, zC + nz * 0.05);
+    chainDim(xs, yC, zC, x => {
+      const q = out.clone().setX(x);
+      if (x === xConn) return [V(x, HC + SB * Math.cos(ac) + 0.04, SA * Math.sin(ac) + 0.05), q];
+      if (x === BODY1) return [V(x, HC + 0.06, 0.04), q];
+      if (x === BODY0) return [V(x, yD + ny * 0.09, zD + nz * 0.09), q];
+      return [V(x, yD + ny * 0.06, zD + nz * 0.06), q];
+    }, [1, DRING_X.length]);
+  }
+  // 鸡眼：裙边起点 → 14 个鸡眼 → 裙边止点；标在裙边外沿的地上
+  {
+    const zE = Z1 + 0.2, xs = [0, ...Array.from({ length: N_EYELET }, (_, i) => EYE_END + i * EYE_PITCH), APRON1];
+    chainDim(xs, y, zE, x => (x === 0 || x === APRON1)
+      ? [V(x, y, Z1 + 0.01), V(x, y, zE + 0.06)]
+      : [V(x, y, Z1 - 0.035), V(x, y, zE + 0.06)], [1, N_EYELET]);
+  }
   // 筒体长度，标在筒体上方，每 1 m 一个刻度
   const yT = 2 * R + 0.45;
   dimension(V(BODY0, yT, 0), V(BODY1, yT, 0), "10000",
@@ -664,26 +752,23 @@ function dimension(a, b, text, ext = [], at = a.clone().lerp(b, 0.5)) {  // ext�
   for (let i = 1; i < L; i++) rod(V(BODY0 + i, yT - 0.035, 0), V(BODY0 + i, yT + 0.035, 0), 0.003);
   // 裙边长度 + 平头端留空，在裙边外侧
   dimension(V(0, y, zA), V(APRON1, y, zA), "10000",
-    [[V(0, y, R + APRON + 0.02), V(0, y, zA + 0.08)], [V(APRON1, y, R + APRON + 0.02), V(APRON1, y, zA + 0.08)]]);
+    [[V(0, y, R + APRON + 0.02), V(0, y, zA + 0.08)], [V(APRON1, y, R + APRON + 0.02), V(APRON1, y, zA + 0.08)]],
+    V(EYE_END + 10 * EYE_PITCH, y, zA));  // 数字放在鸡眼位置上，和鸡眼间距的数字、合并后的“13 × 720”都错开
   dimension(V(APRON1, y, zA), V(BODY1, y, zA), "500", [[V(BODY1, y, R + 0.1), V(BODY1, y, zA + 0.08)]]);
-  // 裙边伸出宽度，画在裙边上
-  dimension(V(BODY0 + 5.5, 0.01, SA + 0.01), V(BODY0 + 5.5, 0.01, R + APRON), "800");
+  // 裙边伸出宽度，画在裙边上，放在两个鸡眼中间，避开中段合并后的“8 × 1000”
+  const xw = EYE_END + 2.5 * EYE_PITCH;
+  dimension(V(xw, 0.01, SA + 0.01), V(xw, 0.01, R + APRON), "800");
   // 直径，在平头端外面
   const xd = BODY1 + 0.3;
   dimension(V(xd, 0.004, 0), V(xd, 2 * R, 0), "Ø800",
     [[V(BODY1 - CAP, 2 * R, 0), V(xd + 0.08, 2 * R, 0)], [V(BODY1 + 0.02, 0.004, 0), V(xd + 0.08, 0.004, 0)]], V(xd + 0.14, R, 0));
 }
 function showDims(on) {
+  dimsOn = on;
   dimGroup.visible = on;
   dimLabels.forEach(o => { o.visible = on; });
 }
 
-function setDrain(d) {
-  drain = d === "sleeve" ? "sleeve" : "valve";
-  for (const m of [mod1, mod2]) { m.valve.visible = drain === "valve"; m.sleeve.visible = drain === "sleeve"; }
-  document.querySelectorAll("#drain button").forEach(b => b.classList.toggle("on", b.dataset.d === drain));
-  applyText();
-}
 function setLang(l) {
   lang = TEXT[l] ? l : "zh";
   try { localStorage.setItem("np8010-lang", lang); } catch (e) { /* 存不了就算了 */ }
@@ -714,10 +799,6 @@ document.getElementById("views").addEventListener("click", e => {
   setView(e.target.dataset.v);
   history.replaceState(null, "", "#" + e.target.dataset.v);  // 只放视图名，链接里能带过去
 });
-document.getElementById("drain").addEventListener("click", e => {
-  if (!e.target.dataset.d) return;
-  setDrain(e.target.dataset.d);
-});
 document.getElementById("lang").addEventListener("click", e => {
   if (!e.target.dataset.l) return;
   setLang(e.target.dataset.l);
@@ -730,7 +811,7 @@ try { saved = localStorage.getItem("np8010-lang"); } catch (e) { /* 无痕模式
 lang = TEXT[params.get("lang")] ? params.get("lang") : (TEXT[saved] ? saved : "zh");
 setView(params.get("v") || "iso");
 addEventListener("hashchange", () => { const v = location.hash.slice(1); if (VIEWS[v]) setView(v); });
-setDrain(params.get("drain") || "valve");
+applyText();
 if (params.get("labels") === "0") { document.getElementById("lbl").checked = false; tags.forEach(t => t.visible = false); }
 if (params.get("dims") === "0") { document.getElementById("dims").checked = false; showDims(false); }
 if (params.get("ui") === "0") document.getElementById("panel").style.display = document.querySelector(".hint").style.display = "none";
@@ -744,6 +825,7 @@ addEventListener("resize", () => {
 renderer.setAnimationLoop(() => {
   controls.update();
   renderer.render(scene, camera);
+  updateChains();
   labelRenderer.render(scene, camera);
 });
 </script>
